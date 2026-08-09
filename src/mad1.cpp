@@ -69,8 +69,6 @@
     TODO:
     - the video board is emulated with a stock ISA CGA card fed the MAD-1's
       own character generator; a proper device for it is needed
-    - channel 1 of the timer, the DRAM refresh, is not wired to the DMA
-      controller; nothing in the diagnostics checks it
     - the keyboard is a high level emulation; the real one is an 8048 unit
       whose ROM has not been dumped
     - hard disk controller EPROM (hdd.bin) is not used yet
@@ -82,6 +80,7 @@
 #include "bus/isa/isa.h"
 #include "bus/isa/isa_cards.h"
 #include "cpu/i86/i186.h"
+#include "machine/am9517a.h"
 #include "machine/genpc.h"
 #include "machine/i8255.h"
 #include "machine/pic8259.h"
@@ -106,6 +105,7 @@ public:
 		m_pic(*this, "mb:pic8259"),
 		m_pit(*this, "pit"),
 		m_speaker(*this, "speaker"),
+		m_dma(*this, "mb:dma8237"),
 		m_dsw(*this, "DSW"),
 		m_keys(*this, "ROW%u", 0U)
 	{ }
@@ -122,6 +122,7 @@ private:
 	required_device<pic8259_device> m_pic;
 	required_device<pit8254_device> m_pit;
 	required_device<speaker_sound_device> m_speaker;
+	required_device<am9517a_device> m_dma;
 	required_ioport m_dsw;
 	required_ioport_array<11> m_keys;
 
@@ -133,6 +134,7 @@ private:
 	uint8_t ppi_portc_r();
 	void ppi_portc_w(uint8_t data);
 	void update_fdc();
+	void pit_out1_w(int state);
 	void pit_out2_w(int state);
 
 	TIMER_CALLBACK_MEMBER(scan_keyboard);
@@ -141,6 +143,7 @@ private:
 	uint8_t m_portb = 0xff;
 	uint8_t m_portc = 0xff;
 	uint8_t m_scancode = 0;
+	int m_pit_out1 = 0;
 	int m_pit_out2 = 0;
 	bool m_irq1 = false;
 
@@ -219,6 +222,17 @@ void mad1_state::ppi_portc_w(uint8_t data)
 	update_fdc();
 }
 
+void mad1_state::pit_out1_w(int state)
+{
+	// channel 1 asks the DMA controller for a DRAM refresh cycle on channel 0.
+	// The power-on diagnostics watch channel 0's address counter move and stop
+	// with "refresh initialization failure" if it does not.  The motherboard
+	// device drops the request again when it acknowledges the transfer.
+	if (!m_pit_out1 && state)
+		m_dma->dreq0_w(1);
+	m_pit_out1 = state;
+}
+
 void mad1_state::pit_out2_w(int state)
 {
 	m_pit_out2 = state;
@@ -283,6 +297,7 @@ void mad1_state::machine_start()
 	save_item(NAME(m_portb));
 	save_item(NAME(m_portc));
 	save_item(NAME(m_scancode));
+	save_item(NAME(m_pit_out1));
 	save_item(NAME(m_pit_out2));
 	save_item(NAME(m_irq1));
 	save_item(NAME(m_keystate));
@@ -456,6 +471,7 @@ void mad1_state::mad1(machine_config &config)
 	m_pit->set_clk<0>(XTAL(14'318'181) / 12.0);
 	m_pit->out_handler<0>().set(m_pic, FUNC(pic8259_device::ir0_w));
 	m_pit->set_clk<1>(XTAL(14'318'181) / 12.0);
+	m_pit->out_handler<1>().set(FUNC(mad1_state::pit_out1_w));
 	m_pit->set_clk<2>(XTAL(14'318'181) / 12.0);
 	m_pit->out_handler<2>().set(FUNC(mad1_state::pit_out2_w));
 

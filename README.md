@@ -61,7 +61,8 @@ cd mame && make SUBTARGET=mad1 SOURCES=src/mame/madcomputer/mad1.cpp -j3
 ```
 
 Then `scripts/run.sh` boots the machine, and `scripts/run.sh --check` does it
-headless and verifies the result. On a machine with 8 GB of RAM do not go
+headless: once with the console on COM1 to read the power-on diagnostics as
+text, and once with a DOS floppy to type a `DIR` and check the screen. On a machine with 8 GB of RAM do not go
 above `-j3`: the build runs out of memory, silently truncates `luaengine.o`
 and then fails to link with `undefined reference to lua_engine::`.
 
@@ -72,8 +73,6 @@ and then fails to link with `undefined reference to lua_engine::`.
   prints a checksum warning). The real board is a single 6845 card with both
   monochrome and colour modes and two fonts in its EPROM; it deserves its own
   device. The driver is flagged `MACHINE_IMPERFECT_GRAPHICS` for this.
-* **Channel 1 of the timer, the DRAM refresh, is not wired to the DMA
-  controller.** Nothing in the power-on diagnostics checks it.
 * **The keyboard is a high level emulation.** The real unit is 8048 based and
   its ROM has never been dumped, and none of MAME's XT keyboards can stand in
   (`pcxt83` needs `4584751.m1`, `pc83` has its MCU as `NO_DUMP`). Scan codes
@@ -161,6 +160,22 @@ as for the 8255: the driver instantiates its own 8254 and its own speaker and
 maps them over `0040-0043`. The motherboard device's 8253 is then never
 programmed, its output never toggles and it stays quiet — and the MAD-1's
 speaker works properly, power-on beeps included.
+
+**Channel 1 of the timer has to reach the DMA controller.** Taking the 8254
+over means channel 1, the DRAM refresh, no longer asks channel 0 of the 8237
+for its transfer. The diagnostics notice: routine `F832C` reads the DMA
+channel 0 address counter four thousand times and expects it to move, and
+stops with `WARNING!! SYSTEM FAILURE (03) DETECTED!!` /
+`refresh initialization failure` when it does not. Drive `dreq0_w` from the
+channel 1 output; the motherboard device drops the request again when it
+acknowledges the transfer.
+
+**Verifying a POST as text, not pixels.** Setting the display switches to
+`None` puts the console on COM1, so `scripts/serialcfg/mad1.cfg` plus
+`-bitb` gives the whole power-on sequence as text and `run.sh --check` can
+simply grep it for `SELF TESTS COMPLETE` and for `FAILURE`. Counting lit
+pixels in a snapshot is enough to tell a DOS directory listing from a blank
+screen, but it will happily pass a POST that printed an extra failure line.
 
 **`gpu.bin` is not a GPU.** It is the character generator: four 2K banks, of
 which 0 and 1 are rows 0-7 and 8-15 of an 8x16 font, 2 is all ones, and 3 is
