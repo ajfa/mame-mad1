@@ -24,6 +24,8 @@ ANSI     SYS     1678   3-17-87  12:00p
        22 File(s)      9216 bytes free
 ```
 
+![PC-DOS 3.30 running on the emulated MAD-1](docs/dos.png)
+
 Verified end to end: the power-on diagnostics pass with no failure message,
 DOS loads from the floppy, the keyboard works and `DIR` returns the real
 catalogue of the disk.
