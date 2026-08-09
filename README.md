@@ -24,8 +24,6 @@ ANSI     SYS     1678   3-17-87  12:00p
        22 File(s)      9216 bytes free
 ```
 
-![PC-DOS 3.30 running on the emulated MAD-1](docs/dos.png)
-
 Verified end to end: the power-on diagnostics pass with no failure message,
 DOS loads from the floppy, the keyboard works and `DIR` returns the real
 catalogue of the disk.
@@ -74,10 +72,8 @@ and then fails to link with `undefined reference to lua_engine::`.
   prints a checksum warning). The real board is a single 6845 card with both
   monochrome and colour modes and two fonts in its EPROM; it deserves its own
   device. The driver is flagged `MACHINE_IMPERFECT_GRAPHICS` for this.
-* **No sound.** The MAD-1 wires its 8255 differently from an IBM PC, so the
-  driver supplies its own and shadows the one inside `ibm5160_mb_device`. That
-  leaves the gate of channel 2 of the 8254 unconnected, so the speaker is
-  dead. `MACHINE_NO_SOUND`.
+* **Channel 1 of the timer, the DRAM refresh, is not wired to the DMA
+  controller.** Nothing in the power-on diagnostics checks it.
 * **The keyboard is a high level emulation.** The real unit is 8048 based and
   its ROM has never been dumped, and none of MAME's XT keyboards can stand in
   (`pcxt83` needs `4584751.m1`, `pc83` has its MCU as `NO_DUMP`). Scan codes
@@ -153,6 +149,18 @@ remembering: it sends the console to COM1, and the ROM has a serial character
 output routine at `F8164` (9600 8N1, set up from the table at `022B`). The
 POST normally writes to the CRTC, but its *error* messages go out of the
 serial port as well.
+
+**Shadowing the motherboard device's 8255 makes the machine whistle.** Its
+speaker is driven by `m_pc_spkrdata & m_pit_out2`, and the gate of channel 2 of
+its 8253 comes from port B of the 8255 it owns. Take that 8255 over and the
+gate is left floating, the counter free runs and the machine emits a continuous
+tone from the first frame. `MACHINE_NO_SOUND` does not help — it is a label,
+not a mute. Driving the gate from outside is not enough either, because the
+speaker data bit goes through a protected member. The way out is the same trick
+as for the 8255: the driver instantiates its own 8254 and its own speaker and
+maps them over `0040-0043`. The motherboard device's 8253 is then never
+programmed, its output never toggles and it stays quiet — and the MAD-1's
+speaker works properly, power-on beeps included.
 
 **`gpu.bin` is not a GPU.** It is the character generator: four 2K banks, of
 which 0 and 1 are rows 0-7 and 8-15 of an 8x16 font, 2 is all ones, and 3 is

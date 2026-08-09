@@ -49,6 +49,11 @@
       port C (62h)         - written by the BIOS; bit 3 pulses the floppy
                              controller's reset line
 
+    Because the motherboard device's own 8255 is shadowed, the gate of channel
+    2 of its 8253 would be left floating and its speaker would whistle
+    continuously, so this driver brings its own 8254 and speaker too and maps
+    them over 0040-0043.
+
     The configuration switches (port A with port B bit 7 set) are also
     MAD-1 specific: bit 0 selects floppy (1) or hard disk (0) boot,
     bits 2-3 are the memory size, bits 4-5 the display (00 = none, so the
@@ -64,8 +69,8 @@
     TODO:
     - the video board is emulated with a stock ISA CGA card fed the MAD-1's
       own character generator; a proper device for it is needed
-    - no speaker: the motherboard device's own 8255 is shadowed by ours, so
-      the PIT channel 2 gate is never driven
+    - channel 1 of the timer, the DRAM refresh, is not wired to the DMA
+      controller; nothing in the diagnostics checks it
     - the keyboard is a high level emulation; the real one is an 8048 unit
       whose ROM has not been dumped
     - hard disk controller EPROM (hdd.bin) is not used yet
@@ -80,7 +85,11 @@
 #include "machine/genpc.h"
 #include "machine/i8255.h"
 #include "machine/pic8259.h"
+#include "machine/pit8253.h"
 #include "machine/ram.h"
+#include "sound/spkrdev.h"
+
+#include "speaker.h"
 
 #include "softlist_dev.h"
 
@@ -95,6 +104,8 @@ public:
 		m_maincpu(*this, "maincpu"),
 		m_ppi(*this, "ppi"),
 		m_pic(*this, "mb:pic8259"),
+		m_pit(*this, "pit"),
+		m_speaker(*this, "speaker"),
 		m_dsw(*this, "DSW"),
 		m_keys(*this, "ROW%u", 0U)
 	{ }
@@ -109,6 +120,8 @@ private:
 	required_device<i80186_cpu_device> m_maincpu;
 	required_device<i8255_device> m_ppi;
 	required_device<pic8259_device> m_pic;
+	required_device<pit8254_device> m_pit;
+	required_device<speaker_sound_device> m_speaker;
 	required_ioport m_dsw;
 	required_ioport_array<11> m_keys;
 
@@ -120,6 +133,7 @@ private:
 	uint8_t ppi_portc_r();
 	void ppi_portc_w(uint8_t data);
 	void update_fdc();
+	void pit_out2_w(int state);
 
 	TIMER_CALLBACK_MEMBER(scan_keyboard);
 	TIMER_CALLBACK_MEMBER(update_fdc_deferred);
@@ -127,6 +141,7 @@ private:
 	uint8_t m_portb = 0xff;
 	uint8_t m_portc = 0xff;
 	uint8_t m_scancode = 0;
+	int m_pit_out2 = 0;
 	bool m_irq1 = false;
 
 	emu_timer *m_kbd_timer = nullptr;
@@ -158,7 +173,8 @@ void mad1_state::mad1_io(address_map &map)
 {
 	map.unmap_value_high();
 	map(0x0000, 0x00ff).m("mb", FUNC(ibm5160_mb_device::map));
-	// our 8255 replaces the motherboard device's PC-style one
+	// our 8254 and 8255 replace the motherboard device's
+	map(0x0040, 0x0043).rw(m_pit, FUNC(pit8254_device::read), FUNC(pit8254_device::write));
 	map(0x0060, 0x0063).rw(m_ppi, FUNC(i8255_device::read), FUNC(i8255_device::write));
 }
 
@@ -182,6 +198,10 @@ uint8_t mad1_state::ppi_porta_r()
 void mad1_state::ppi_portb_w(uint8_t data)
 {
 	m_portb = data;
+	// bits 0 and 1 are the gate of channel 2 of the timer and the speaker
+	// data, exactly as on a PC
+	m_pit->write_gate2(BIT(data, 0));
+	m_speaker->level_w(m_pit_out2 & BIT(data, 1));
 	update_fdc();
 }
 
@@ -197,6 +217,12 @@ void mad1_state::ppi_portc_w(uint8_t data)
 {
 	m_portc = data;
 	update_fdc();
+}
+
+void mad1_state::pit_out2_w(int state)
+{
+	m_pit_out2 = state;
+	m_speaker->level_w(m_pit_out2 & BIT(m_portb, 1));
 }
 
 void mad1_state::update_fdc()
@@ -257,6 +283,7 @@ void mad1_state::machine_start()
 	save_item(NAME(m_portb));
 	save_item(NAME(m_portc));
 	save_item(NAME(m_scancode));
+	save_item(NAME(m_pit_out2));
 	save_item(NAME(m_irq1));
 	save_item(NAME(m_keystate));
 	save_item(NAME(m_queue));
@@ -422,6 +449,19 @@ void mad1_state::mad1(machine_config &config)
 	mb.int_callback().set(m_maincpu, FUNC(i80186_cpu_device::int0_w));
 	mb.nmi_callback().set_inputline(m_maincpu, INPUT_LINE_NMI);
 
+	// the MAD-1's own 8254 and speaker, mapped over the motherboard device's
+	// 8253: that one cannot be reached, and its speaker sits on a free running
+	// counter and whistles
+	PIT8254(config, m_pit);
+	m_pit->set_clk<0>(XTAL(14'318'181) / 12.0);
+	m_pit->out_handler<0>().set(m_pic, FUNC(pic8259_device::ir0_w));
+	m_pit->set_clk<1>(XTAL(14'318'181) / 12.0);
+	m_pit->set_clk<2>(XTAL(14'318'181) / 12.0);
+	m_pit->out_handler<2>().set(FUNC(mad1_state::pit_out2_w));
+
+	SPEAKER(config, "mono").front_center();
+	SPEAKER_SOUND(config, m_speaker).add_route(ALL_OUTPUTS, "mono", 0.80);
+
 	I8255(config, m_ppi);
 	m_ppi->in_pa_callback().set(FUNC(mad1_state::ppi_porta_r));
 	m_ppi->out_pb_callback().set(FUNC(mad1_state::ppi_portb_w));
@@ -459,4 +499,4 @@ ROM_END
 
 
 //    YEAR  NAME  PARENT  COMPAT  MACHINE  INPUT  CLASS       INIT        COMPANY                MACHINE  FLAGS
-COMP( 1984, mad1, 0,      0,      mad1,    mad1,  mad1_state, empty_init, "Mad Computers Inc.", "MAD-1", MACHINE_NO_SOUND | MACHINE_IMPERFECT_GRAPHICS )
+COMP( 1984, mad1, 0,      0,      mad1,    mad1,  mad1_state, empty_init, "Mad Computers Inc.", "MAD-1", MACHINE_IMPERFECT_GRAPHICS )
