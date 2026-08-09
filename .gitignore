@@ -1,0 +1,14 @@
+# ROM dumps and disk images are not redistributed here - see the README for
+# where to obtain them
+roms/
+disks/
+snap/
+run.log
+*.bin
+*.img
+*.imd
+*.td0
+
+# a MAME checkout and its build output
+mame/
+bin/
