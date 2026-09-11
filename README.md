@@ -203,6 +203,16 @@ from `/dev/null` in a self test — MAME then never posts the keystrokes.
 * Schematic and technical reference: [bitsavers](https://bitsavers.org/pdf/madComputer/mad-1/).
 * MAME: MAMEdev.
 
+## Where to look
+
+- <https://forum.vcfed.org/index.php?threads/mad-1-looking-for-information.1247595/>
+  - the VCFed thread that gathered what is known about this machine, and where
+  the material this driver was written from came from.
+
+The MAD-1 is obscure enough that there is no second source to cross check
+against, so anything in the driver that is not read from a dump or a manual is
+marked as a guess in the code.
+
 ## Licence
 
 The driver and the tools in this repository are BSD-3-Clause, the same licence
